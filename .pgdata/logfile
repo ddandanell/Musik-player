@@ -1,0 +1,22 @@
+2026-04-27 09:14:23.518 WITA [99409] LOG:  starting PostgreSQL 14.20 (Homebrew) on aarch64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.4.4.1), 64-bit
+2026-04-27 09:14:23.519 WITA [99409] LOG:  listening on IPv6 address "::1", port 5433
+2026-04-27 09:14:23.519 WITA [99409] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-04-27 09:14:23.519 WITA [99409] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5433"
+2026-04-27 09:14:23.521 WITA [99410] LOG:  database system was shut down at 2026-04-27 09:14:13 WITA
+2026-04-27 09:14:23.524 WITA [99409] LOG:  database system is ready to accept connections
+2026-04-29 01:25:36.923 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:25:48.657 WITA [46498] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:25:48.664 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:26:00.438 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:26:42.095 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:26:53.725 WITA [46580] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:27:12.260 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:27:24.057 WITA [46632] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:27:42.261 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:27:54.053 WITA [46672] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-04-29 01:28:12.279 WITA [99414] LOG:  using stale statistics instead of current ones because stats collector is not responding
+2026-05-01 12:33:01.614 WITA [99414] LOG:  out of file descriptors: Too many open files in system; release and retry
+2026-05-01 12:33:01.619 WITA [99415] LOG:  out of file descriptors: Too many open files in system; release and retry
+2026-05-01 12:33:01.620 WITA [99415] LOG:  could not open temporary statistics file "pg_stat_tmp/db_0.tmp": Too many open files in system
+2026-05-01 12:33:01.633 WITA [84487] LOG:  out of file descriptors: Too many open files in system; release and retry
+2026-05-01 12:33:01.634 WITA [84487] FATAL:  could not open file "global/pg_filenode.map": Too many open files in system

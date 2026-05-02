@@ -1,0 +1,639 @@
+// DanChamp Platform — multi-tenant chamber operating system
+// Tenant isolation: every operational row carries chamberId.
+// RLS is enforced at the Postgres layer (see prisma/rls.sql) when running on Supabase.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Role hierarchy (spec §2) ----------
+
+enum PlatformRole {
+  OPERATOR // Tier 1 — owns the entire platform
+  USER // everyone else; chamber-scoped role lives on Membership
+}
+
+enum ChamberRole {
+  CHAMBER_ADMIN // Tier 2
+  BOARD_MEMBER // Tier 3
+  CORPORATE_CONTACT // Tier 4
+  BUSINESS_MEMBER // Tier 5
+  PUBLIC // Tier 6 — has a profile but is not a chamber member
+}
+
+enum ChamberStatus {
+  ACTIVE
+  SUSPENDED
+  PROVISIONING
+}
+
+enum MembershipStatus {
+  PENDING_REVIEW
+  PENDING_BOARD_VOTE
+  ACTIVE
+  LAPSED
+  REJECTED
+  CANCELLED
+}
+
+enum EventVisibility {
+  PUBLIC // visible in community layer
+  MEMBERS_ONLY
+  TIER_RESTRICTED
+  BOARD_ONLY
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+enum TicketHolderStatus {
+  RESERVED
+  PAID
+  CHECKED_IN
+  REFUNDED
+  WAITLISTED
+}
+
+enum InvoiceStatus {
+  OPEN
+  PAID
+  VOIDED
+  REFUNDED
+}
+
+enum CommunicationChannel {
+  EMAIL
+  WHATSAPP
+  IN_APP
+}
+
+enum MotionStatus {
+  OPEN
+  PASSED
+  REJECTED
+  WITHDRAWN
+}
+
+enum VoteChoice {
+  YES
+  NO
+  ABSTAIN
+}
+
+// ---------- Platform-level entities ----------
+
+model User {
+  id           String       @id @default(cuid())
+  // Mirrors Supabase auth.users.id when sourced from Supabase Auth
+  authId       String?      @unique
+  email        String       @unique
+  name         String?
+  avatarUrl    String?
+  bio          String?
+  headline     String?
+  location     String?
+  phone        String?
+  platformRole PlatformRole @default(USER)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  memberships  Membership[]
+  ticketsHeld  Ticket[]
+  motionsCast  Vote[]
+  authoredPosts ForumPost[]
+  sentMessages CommunicationLog[] @relation("SentBy")
+  ownedCompanies CompanyContact[]
+
+  @@index([email])
+}
+
+model Chamber {
+  id          String        @id @default(cuid())
+  slug        String        @unique // subdomain segment
+  name        String
+  country     String
+  city        String?
+  tagline     String?
+  heroImageUrl String?
+  currency    String        @default("IDR")
+  brandColor  String        @default("#0B5FFF")
+  logoUrl     String?
+  status      ChamberStatus @default(PROVISIONING)
+  licenseFee  Decimal       @default(0) @db.Decimal(12, 2)
+  txFeeBps    Int           @default(500) // basis points; 500 = 5%
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  memberships     Membership[]
+  membershipTiers MembershipTier[]
+  events          Event[]
+  applications    MembershipApplication[]
+  motions         Motion[]
+  invoices        Invoice[]
+  forumThreads    ForumThread[]
+  marketplaceListings MarketplaceListing[]
+  knowledgeArticles KnowledgeArticle[]
+  companies       Company[]
+  communicationLogs CommunicationLog[]
+  auditEntries    AuditEntry[]
+  documents       Document[]
+  meetings        Meeting[]
+  conflictDeclarations ConflictDeclaration[]
+  sponsors        Sponsor[]
+  conversations   Conversation[]
+
+  @@index([slug])
+}
+
+// ---------- Membership ----------
+
+model MembershipTier {
+  id          String   @id @default(cuid())
+  chamberId   String
+  chamber     Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(12, 2)
+  durationDays Int     @default(365)
+  benefits    Json?
+  isHidden    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships Membership[]
+  applications MembershipApplication[]
+
+  @@unique([chamberId, name])
+}
+
+model Membership {
+  id          String           @id @default(cuid())
+  chamberId   String
+  chamber     Chamber          @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tierId      String?
+  tier        MembershipTier?  @relation(fields: [tierId], references: [id])
+  role        ChamberRole      @default(BUSINESS_MEMBER)
+  status      MembershipStatus @default(ACTIVE)
+  companyId   String?
+  company     Company?         @relation(fields: [companyId], references: [id])
+  joinedAt    DateTime         @default(now())
+  expiresAt   DateTime?
+  autoRenew   Boolean          @default(true)
+  tags        String[]         @default([])
+
+  @@unique([chamberId, userId])
+  @@index([chamberId, status])
+  @@index([chamberId, role])
+}
+
+model MembershipApplication {
+  id          String           @id @default(cuid())
+  chamberId   String
+  chamber     Chamber          @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  applicantEmail String
+  applicantName  String
+  companyName    String?
+  tierId      String?
+  tier        MembershipTier?  @relation(fields: [tierId], references: [id])
+  payload     Json
+  status      MembershipStatus @default(PENDING_REVIEW)
+  submittedAt DateTime         @default(now())
+  decidedAt   DateTime?
+  decidedBy   String?
+
+  @@index([chamberId, status])
+}
+
+// ---------- Companies (corporate dashboard) ----------
+
+model Company {
+  id          String   @id @default(cuid())
+  chamberId   String
+  chamber     Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  name        String
+  industry    String?
+  country     String?
+  seats       Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships Membership[]
+  contacts    CompanyContact[]
+
+  @@index([chamberId])
+}
+
+model CompanyContact {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isPrimary Boolean @default(false)
+
+  @@unique([companyId, userId])
+}
+
+// ---------- Events ----------
+
+model Event {
+  id            String          @id @default(cuid())
+  chamberId     String
+  chamber       Chamber         @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  slug          String
+  title         String
+  description   String
+  coverImageUrl String?
+  startsAt      DateTime
+  endsAt        DateTime
+  location      String?
+  capacity      Int?
+  visibility    EventVisibility @default(MEMBERS_ONLY)
+  status        EventStatus     @default(DRAFT)
+  createdById   String
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  ticketTypes TicketType[]
+  tickets     Ticket[]
+  sponsors    EventSponsor[]
+
+  @@unique([chamberId, slug])
+  @@index([chamberId, startsAt])
+}
+
+model TicketType {
+  id        String  @id @default(cuid())
+  eventId   String
+  event     Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name      String
+  price     Decimal @db.Decimal(12, 2)
+  capacity  Int?
+  audience  String? // "MEMBER" | "NON_MEMBER" | "SPONSOR" | etc
+
+  tickets Ticket[]
+}
+
+model Ticket {
+  id           String             @id @default(cuid())
+  eventId      String
+  event        Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketTypeId String
+  ticketType   TicketType         @relation(fields: [ticketTypeId], references: [id])
+  userId       String
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status       TicketHolderStatus @default(RESERVED)
+  invoiceId    String?
+  invoice      Invoice?           @relation(fields: [invoiceId], references: [id])
+  checkedInAt  DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@index([eventId, status])
+  @@unique([eventId, userId])
+}
+
+// ---------- Board governance ----------
+
+model Motion {
+  id        String       @id @default(cuid())
+  chamberId String
+  chamber   Chamber      @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  proposedBy String
+  status    MotionStatus @default(OPEN)
+  quorum    Int          @default(0)
+  openedAt  DateTime     @default(now())
+  closedAt  DateTime?
+
+  votes Vote[]
+
+  @@index([chamberId, status])
+}
+
+model Vote {
+  id       String     @id @default(cuid())
+  motionId String
+  motion   Motion     @relation(fields: [motionId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  choice   VoteChoice
+  castAt   DateTime   @default(now())
+
+  @@unique([motionId, userId])
+}
+
+// ---------- Invoices & payments ----------
+
+model Invoice {
+  id        String        @id @default(cuid())
+  chamberId String
+  chamber   Chamber       @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  number    String
+  payerEmail String
+  amount    Decimal       @db.Decimal(12, 2)
+  currency  String        @default("IDR")
+  status    InvoiceStatus @default(OPEN)
+  description String?
+  externalRef String? // Xendit / Stripe ID
+  paymentUrl  String?
+  issuedAt  DateTime      @default(now())
+  paidAt    DateTime?
+
+  tickets Ticket[]
+
+  @@unique([chamberId, number])
+  @@index([chamberId, status])
+}
+
+// ---------- Communication ----------
+
+model CommunicationLog {
+  id        String               @id @default(cuid())
+  chamberId String
+  chamber   Chamber              @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  channel   CommunicationChannel
+  templateKey String?
+  recipientEmail String?
+  recipientPhone String?
+  payload   Json
+  sentById  String?
+  sentBy    User?                @relation("SentBy", fields: [sentById], references: [id])
+  sentAt    DateTime             @default(now())
+  delivered Boolean              @default(false)
+
+  @@index([chamberId, channel, sentAt])
+}
+
+// ---------- Forum & knowledge ----------
+
+model ForumThread {
+  id        String   @id @default(cuid())
+  chamberId String
+  chamber   Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  title     String
+  topic     String?
+  createdById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  posts ForumPost[]
+
+  @@index([chamberId, updatedAt])
+}
+
+model ForumPost {
+  id       String      @id @default(cuid())
+  threadId String
+  thread   ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  authorId String
+  author   User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body     String
+  createdAt DateTime   @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+model KnowledgeArticle {
+  id            String   @id @default(cuid())
+  chamberId     String
+  chamber       Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  slug          String
+  title         String
+  excerpt       String?
+  body          String
+  coverImageUrl String?
+  tags          String[] @default([])
+  isPublic      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([chamberId, slug])
+}
+
+// ---------- Marketplace ----------
+
+model MarketplaceListing {
+  id          String   @id @default(cuid())
+  chamberId   String
+  chamber     Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  sellerUserId String
+  title       String
+  category    String
+  description String
+  imageUrl    String?
+  priceFrom   Decimal? @db.Decimal(12, 2)
+  isFeatured  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([chamberId, category])
+}
+
+// ---------- Audit (Operator + admin actions) ----------
+
+model AuditEntry {
+  id        String   @id @default(cuid())
+  chamberId String?
+  chamber   Chamber? @relation(fields: [chamberId], references: [id], onDelete: SetNull)
+  actorUserId String
+  action    String
+  target    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([chamberId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+// ---------- Board governance extras (spec §5.3) ----------
+
+enum DocumentVisibility {
+  BOARD_ONLY
+  CHAMBER_ADMIN_ONLY
+  ALL_MEMBERS
+}
+
+model Document {
+  id          String             @id @default(cuid())
+  chamberId   String
+  chamber     Chamber            @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  url         String
+  mimeType    String?
+  visibility  DocumentVisibility @default(BOARD_ONLY)
+  uploadedBy  String
+  uploadedAt  DateTime           @default(now())
+
+  @@index([chamberId, visibility])
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Meeting {
+  id          String        @id @default(cuid())
+  chamberId   String
+  chamber     Chamber       @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  title       String
+  scheduledAt DateTime
+  location    String?
+  status      MeetingStatus @default(SCHEDULED)
+  agenda      Json
+  minutes     String?
+  signedById  String?
+  signedAt    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  attendees MeetingAttendee[]
+
+  @@index([chamberId, scheduledAt])
+}
+
+enum MeetingAttendance {
+  INVITED
+  ACCEPTED
+  DECLINED
+  ATTENDED
+  ABSENT
+}
+
+model MeetingAttendee {
+  id         String            @id @default(cuid())
+  meetingId  String
+  meeting    Meeting           @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  userId     String
+  attendance MeetingAttendance @default(INVITED)
+
+  @@unique([meetingId, userId])
+}
+
+model ConflictDeclaration {
+  id          String   @id @default(cuid())
+  chamberId   String
+  chamber     Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  declaredBy  String
+  subject     String
+  details     String
+  declaredAt  DateTime @default(now())
+  resolvedAt  DateTime?
+
+  @@index([chamberId, declaredAt])
+}
+
+// ---------- Sponsor system on events (spec §5.6) ----------
+
+model Sponsor {
+  id          String   @id @default(cuid())
+  chamberId   String
+  chamber     Chamber  @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  name        String
+  logoUrl     String?
+  websiteUrl  String?
+  blurb       String?
+  createdAt   DateTime @default(now())
+
+  eventSponsors EventSponsor[]
+
+  @@index([chamberId])
+}
+
+enum SponsorTier {
+  PLATINUM
+  GOLD
+  SILVER
+  BRONZE
+}
+
+model EventSponsor {
+  id        String      @id @default(cuid())
+  eventId   String
+  event     Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sponsorId String
+  sponsor   Sponsor     @relation(fields: [sponsorId], references: [id], onDelete: Cascade)
+  tier      SponsorTier @default(SILVER)
+
+  @@unique([eventId, sponsorId])
+}
+
+// ---------- Direct messaging (spec §5.4) ----------
+
+model Conversation {
+  id          String                @id @default(cuid())
+  chamberId   String
+  chamber     Chamber               @relation(fields: [chamberId], references: [id], onDelete: Cascade)
+  startedById String
+  createdAt   DateTime              @default(now())
+  lastMessageAt DateTime            @default(now())
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([chamberId, lastMessageAt])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  lastReadAt     DateTime?
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String
+  body           String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ---------- In-app notifications ----------
+
+enum NotificationKind {
+  APPLICATION_RECEIVED
+  APPLICATION_APPROVED
+  EVENT_RSVP_CONFIRMED
+  EVENT_REMINDER
+  MOTION_OPENED
+  MOTION_CLOSED
+  MESSAGE_RECEIVED
+  INVOICE_PAID
+  GENERIC
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  chamberId String?
+  kind      NotificationKind
+  title     String
+  body      String?
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
