@@ -5,6 +5,7 @@ import { hasChamberRole } from "@/lib/auth/permissions";
 import { recordAudit } from "@/lib/audit";
 import { toCsv } from "@/lib/csv";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(

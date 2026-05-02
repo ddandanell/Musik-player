@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { notifyByEmail, notifyByWhatsApp } from "@/lib/comms";
 import { eventsToRemind, reminderTemplateKey, type ReminderWindow } from "@/lib/reminders";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function authorize(request: NextRequest): boolean {

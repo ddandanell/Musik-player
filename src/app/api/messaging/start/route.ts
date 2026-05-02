@@ -4,6 +4,8 @@ import { prisma } from "@/lib/db";
 import { requireSession } from "@/lib/auth/session";
 import { chamberRoleFor } from "@/lib/auth/permissions";
 
+export const runtime = "nodejs";
+
 const inputSchema = z.object({
   chamberSlug: z.string().min(1),
   targetUserId: z.string().min(1),
